@@ -659,10 +659,41 @@ export class AirtableStore implements ThreadDataStore {
       throw new Error("Project not found");
     }
 
+    const messageRecords = await listAllRecords<RecordFields>(
+      AIRTABLE_TABLES.messages,
+      {
+        filterByFormula: equalsFormula(AIRTABLE_FIELDS.messages.chatId, chatId),
+        maxRecords: 500,
+      },
+    );
+    const chatMessages = messageRecords.map(mapMessage);
+
     const linqChatIds = joinMultilineIds([...project.linqChatIds, chatId]);
+    const latestMessageTimestamp = chatMessages
+      .map((message) => message.timestamp)
+      .filter(Boolean)
+      .sort((left, right) => {
+        return new Date(right).getTime() - new Date(left).getTime();
+      })[0];
+
     await updateRecord(AIRTABLE_TABLES.projects, projectRecordId, {
       [AIRTABLE_FIELDS.projects.linqChatIds]: linqChatIds,
+      ...(latestMessageTimestamp
+        ? { [AIRTABLE_FIELDS.projects.lastActivity]: latestMessageTimestamp }
+        : {}),
     });
+
+    await updateRecords(
+      AIRTABLE_TABLES.messages,
+      chatMessages
+        .filter((message) => message.projectRecordId !== projectRecordId)
+        .map((message) => ({
+          id: message.recordId,
+          fields: {
+            [AIRTABLE_FIELDS.messages.project]: [projectRecordId],
+          },
+        })),
+    );
   }
 
   async listProjectParticipants(projectRecordId: string) {
